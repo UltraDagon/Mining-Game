@@ -149,9 +149,14 @@ class World
 class Player
 {
     private:
+        image_cache* images;
+        int scale;
         bool grounded;
         bool jumping;
         bool mining;
+        int animFrame;
+        int animMaxFrame;
+        string currentAnim;
         pair< int, int > mining_tile;
 
         vector < pair< int, int > > generate_scalar_vector ( vector < pair< int, int > > vertices, vector < pair< int, int > > axis )
@@ -239,26 +244,42 @@ class Player
 
             return true;
         }
-    
+        
+        void change_animation( string texture_name )
+        {
+            if ( currentAnim != texture_name )
+            {
+                SDL_Surface* surface = images->get_image( "assets/"+texture_name+".bmp" );
+                currentAnim = texture_name;
+                player_texture = SDL_CreateTextureFromSurface( renderer, surface );
+                animFrame = 0;
+                animMaxFrame = surface->w / (scale*15) - 1;
+            }
+        }
+
     public:
         SDL_Renderer* renderer;
         SDL_Texture* player_texture;
         SDL_Rect position;
         SDL_FPoint velocity;
 
-        Player( SDL_Renderer &_renderer, image_cache images, int scale, int pos_x, int pos_y )
+        Player( SDL_Renderer &_renderer, image_cache* images_, int scale_, int pos_x, int pos_y )
         {
             renderer = &_renderer;
-            player_texture = SDL_CreateTextureFromSurface( renderer, images.get_image( "assets/player.bmp" ) );
 
             position.x = pos_x;
             position.y = pos_y;
-            position.w = 15*scale;
-            position.h = 25*scale;
+            position.w = 15*scale_;
+            position.h = 25*scale_;
 
             velocity = {0, 0};
             grounded = false;
             jumping = false;
+            
+            images = images_;
+            scale = scale_;
+            
+            change_animation( "playerIdle" );
         }
 
         ~Player( )
@@ -268,7 +289,11 @@ class Player
 
         void render( )
         {
-            SDL_RenderCopy( renderer, player_texture, NULL, &position );
+            SDL_RenderCopy( renderer, player_texture, new SDL_Rect{animFrame*position.w,0,(animFrame+1)*position.w,position.h}, &position );
+
+            animFrame++;
+            if ( animFrame > animMaxFrame )
+            { animFrame = 0; }
         }
 
         //Note for self: make it so that while not grounded, treat collision on blocks under the current left and right walls as left and right walls
@@ -320,9 +345,15 @@ class Player
         void walk_right ( bool walk )
         {
             if ( walk )
-            { velocity.x = 1; }
-            else if ( velocity.x > 0)
-            { velocity.x = 0; }
+            {
+                velocity.x = 1;
+                change_animation( "playerRunRight" );
+            }
+            else if ( velocity.x > 0 )
+            {
+                velocity.x = 0;
+                change_animation( "playerIdle" );
+            }
         }
 
         void walk_left ( bool walk )
@@ -367,8 +398,8 @@ class Player
             double double_floor_y = (double)( position.y + position.h - world.corner_y) / ( double )( 14*world.scale ) - 0.5;
             int floor_y = ceil( double_floor_y );
 
-            cout << " | " << (int)(2.0*double_floor_y) % 2 << " | ";
-            cout << "Left x: " << left_x << ", Floor y: " << floor_y;
+            //cout << " | " << (int)(2.0*double_floor_y) % 2 << " | ";
+            //cout << "Left x: " << left_x << ", Floor y: " << floor_y;
             // right wall
             for (int i = 0; i < velocity.x; i++ )
             {
@@ -442,12 +473,13 @@ class Player
             }
         }
 
+        //I think i can get rid of sdl_rendederer & renederer here
         void render_cursor ( SDL_Renderer& renderer, World world, int mouse_x, int mouse_y )
         {
             int tile_x = ceil( ( double )( mouse_x - world.corner_x ) / ( double )( 12*world.scale ) - 0.5 );
             int tile_y = ceil( ( double )( mouse_y - world.corner_y) / ( double )( 14*world.scale ) + 0.5 * ( ( tile_x + 1 ) % 2 ) ) - 1;
 
-            cout << ". Tile x: " << tile_x << ", Tile y: " << tile_y << endl;
+            //cout << ". Tile x: " << tile_x << ", Tile y: " << tile_y << endl;
 
             int render_x = world.corner_x + 12*world.scale*tile_x;
             int render_y = world.corner_y + 14*world.scale*tile_y + 7*world.scale*( tile_x % 2 );
@@ -468,7 +500,7 @@ int main( int argc, char *argv[] )
 
     if ( NULL == window )
     {
-        std::cout << "Could not create window: " << SDL_GetError << std::endl;
+        cout << "Could not create window: " << SDL_GetError << endl;
         return 1;
     }
 
@@ -476,7 +508,7 @@ int main( int argc, char *argv[] )
     
     int scale = 4;
     World world( *renderer, scale, 15, 10 );
-    Player player( *renderer, images, scale, 150, 00 );
+    Player player( *renderer, &images, scale, 150, 00 );
 
     bool running = true;
     while ( running )
