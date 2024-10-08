@@ -2,12 +2,14 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <cmath>
 #include <SDL2/SDL.h>
 #include "functs.h"
 
 using namespace std;
 
 const int WIDTH = 1080, HEIGHT = 720;
+const int RUNNING_ACCEL = 1;
 
 struct
 {
@@ -154,8 +156,10 @@ class Player
         bool grounded;
         bool jumping;
         bool mining;
-        int animFrame;
-        int animMaxFrame;
+        double accelX; // -1 for left, 0 for still, 1 for right
+        double animFrame;
+        double animMaxFrame;
+        double animSpeedScale = 0.1; // 1 is 1 frame per 1/60 seconds, 0.1 is 1 frame per 1/6 seconds
         string currentAnim;
         pair< int, int > mining_tile;
 
@@ -253,7 +257,7 @@ class Player
                 currentAnim = texture_name;
                 player_texture = SDL_CreateTextureFromSurface( renderer, surface );
                 animFrame = 0;
-                animMaxFrame = surface->w / (scale*15) - 1;
+                animMaxFrame = surface->w / (scale*15);
             }
         }
 
@@ -273,13 +277,14 @@ class Player
             position.h = 25*scale_;
 
             velocity = {0, 0};
+            accelX = 0;
             grounded = false;
             jumping = false;
             
             images = images_;
             scale = scale_;
             
-            change_animation( "playerIdle" );
+            change_animation( "playerIdleRight" );
         }
 
         ~Player( )
@@ -289,11 +294,14 @@ class Player
 
         void render( )
         {
-            SDL_RenderCopy( renderer, player_texture, new SDL_Rect{animFrame*position.w,0,(animFrame+1)*position.w,position.h}, &position );
+            SDL_RenderCopy( renderer, player_texture, new SDL_Rect{(int)floor(animFrame)*position.w,0,((int)floor(animFrame)+1)*position.w,position.h}, &position );
+            //SDL_RenderCopy( renderer, player_texture, NULL, &position );
 
-            animFrame++;
-            if ( animFrame > animMaxFrame )
+            animFrame += animSpeedScale;
+            if ( animFrame >= animMaxFrame )
             { animFrame = 0; }
+
+            cout << "Accel:" << accelX << ", Velocity:" << velocity.x << endl;
         }
 
         //Note for self: make it so that while not grounded, treat collision on blocks under the current left and right walls as left and right walls
@@ -346,22 +354,28 @@ class Player
         {
             if ( walk )
             {
-                velocity.x = 1;
+                accelX = RUNNING_ACCEL;
                 change_animation( "playerRunRight" );
             }
-            else if ( velocity.x > 0 )
+            else if ( accelX == RUNNING_ACCEL )
             {
-                velocity.x = 0;
-                change_animation( "playerIdle" );
+                accelX = 0;
+                change_animation( "playerIdleRight" );
             }
         }
 
         void walk_left ( bool walk )
         {
             if ( walk )
-            { velocity.x = -1; }
-            else if ( velocity.x < 0 )
-            { velocity.x = 0; }
+            {
+                accelX = -RUNNING_ACCEL;
+                change_animation( "playerRunLeft" );
+            }
+            else if ( accelX == -RUNNING_ACCEL )
+            {
+                accelX = 0;
+                change_animation( "playerIdleLeft" );
+            }
         }
 
         void jump ( bool up )
@@ -381,6 +395,14 @@ class Player
         void move ( World world )
         {
             int grav = 1; // REMOVE DEBUG TOOL
+            
+            //Walking
+            if (accelX == 0 && velocity.x > 0)
+            { velocity.x -= 1; }
+            else if (accelX == 0 && velocity.x < 0)
+            { velocity.x += 1; }
+            if ( abs(velocity.x + accelX) <= 3 )
+            { velocity.x += accelX; }
 
             //grounded = 1;
             if ( jumping && grounded )
@@ -511,6 +533,7 @@ int main( int argc, char *argv[] )
     Player player( *renderer, &images, scale, 150, 00 );
 
     bool running = true;
+    double deltaTime,oldTime = 0;
     while ( running )
     {
         while ( SDL_PollEvent( &event ) )
@@ -555,6 +578,11 @@ int main( int argc, char *argv[] )
         player.render( );
         player.render_cursor( *renderer, world, mouse_x, mouse_y );
         SDL_RenderPresent( renderer );
+
+        //Framerate and deltaTime
+        deltaTime = clock() - oldTime;
+        double fps = (1.0 / deltaTime) * 1000;
+        oldTime = clock();
     }
 
     SDL_DestroyRenderer( renderer );
