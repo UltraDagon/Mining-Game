@@ -9,14 +9,14 @@
 using namespace std;
 
 const int WIDTH = 1080, HEIGHT = 720;
-const int RUNNING_ACCEL = 1;
+const double RUNNING_ACCEL = 1;
 
-struct
+struct Camera
 {
     //Maybe put global access to renderer in here? not sure pros/cons of it
     SDL_FPoint offset = {0, 0};
     float zoom = 0;
-} Camera;
+} camera;
 
 struct Tile
 {
@@ -79,26 +79,25 @@ class World
             scale = _scale;
             width = _width;
             height = _height;
-            corner_x = 100;
-            corner_y = 180;
+            corner_x = 0;
+            corner_y = 200;
 
-            for ( int w = 0; w < width; w++ )
+            for ( int w = 0; w < width; w++ ) // Fills world with dirt
             {
-                for ( int h = 0; h < height; h++ )
+                for ( int h = 1; h < height; h++ )
                 {
                     tiles[ pair( w, h ) ] = Tile( "dirt" );
                 }
             }
 
-            for ( int w = 0; w < width; w++ )
+            for ( int w = 0; w < width; w++ ) // Fills top layer with grass
             {
-                tiles[ pair(w, 0) ].material = "air";
+                tiles[ pair(w, 0) ].material = "grass";
                 if (w%2 == 0)
                     tiles[ pair(w, 0) ].full = false;
             }
 
             tiles[ pair(3, 2) ].material = "air";
-            //tiles[ pair(4, 2) ].material = "air";
             tiles[ pair(3, 1) ].material = "air";
             tiles[ pair(4, 1) ].material = "air";
             tiles[ pair(5, 1) ].material = "air";
@@ -106,8 +105,6 @@ class World
             tiles[ pair(6, 3) ].material = "air";
             tiles[ pair(7, 1) ].material = "air";
             tiles[ pair(5, 2) ].material = "air";
-            //tiles[ pair(5, 2) ].full = false;
-            //tiles[ pair(7, 2) ].full = false;
             tiles[ pair(2, 0) ].material = "grass";
             tiles[ pair(1, 0) ].material = "grass";
         }
@@ -117,14 +114,15 @@ class World
             return tiles[ pos ];
         }
 
-        void render( )
+        //! TODO: Dont render blocks outside of camera OR only render blocks in closest chunks
+        void render( const Camera camera )
         {   
             for ( int w = 0; w < width; w++ )
             {
                 for ( int h = 0; h < height; h++ )
                 {
-                    int pos_x = corner_x + 12*scale*w;
-                    int pos_y = corner_y + 14*scale*h + 7*scale*( w % 2 ); // Lowers every other tile by half height
+                    int pos_x = corner_x + 12*scale*w + camera.offset.x;
+                    int pos_y = corner_y + 14*scale*h + 7*scale*( w % 2 ) + camera.offset.y; // Lowers every other tile by half height
 
                     if ( tiles[ pair( w, h ) ].material == "dirt" )
                         { WORLD_RenderBasic( *renderer, scale, pos_x, pos_y, SDL_Color{ 150, 75, 0, 255 }, SDL_Color{ 200, 100, 0, 255 }, tiles[ pair( w, h) ].full ); }
@@ -292,19 +290,33 @@ class Player
             SDL_DestroyTexture( player_texture );
         }
 
-        void render( )
+        void render( Camera &camera )
         {
-            SDL_RenderCopy( renderer, player_texture, new SDL_Rect{(int)floor(animFrame)*position.w,0,((int)floor(animFrame)+1)*position.w,position.h}, &position );
+            SDL_Rect* render_rect = new SDL_Rect{(int)floor(animFrame)*position.w,0,((int)floor(animFrame)+1)*position.w,position.h}; //!Not sure if this will cause memory leak? Maybe save it as a variable linked to the player and just modify it
+            
+            const double RIGHT_THRESHOLD = 0.6; // % of screen player has to be past before the camera moves // 0.5 < X <= 1
+            const double LEFT_THRESHOLD = 0.4;
+
+            if (position.x + position.w*0.5 + camera.offset.x > WIDTH*RIGHT_THRESHOLD)
+            { camera.offset.x -= floor((position.x + position.w*0.5 + camera.offset.x - WIDTH*RIGHT_THRESHOLD)*0.1); } // Cool sliding effect, change X in WIDTH*0.75)*X); } for strength. 0 < X <= 1
+            if (position.x + position.w*0.5 + camera.offset.x < WIDTH*LEFT_THRESHOLD)
+            { camera.offset.x -= floor((position.x + position.w*0.5 + camera.offset.x - WIDTH*LEFT_THRESHOLD)*0.1); }
+
+            position.x += camera.offset.x; //! There's GOT to be a better way to do this
+            position.y += camera.offset.y;
+
+            SDL_RenderCopy( renderer, player_texture, render_rect, &position );
+            position.x -= camera.offset.x;
+            position.y -= camera.offset.y;
             //SDL_RenderCopy( renderer, player_texture, NULL, &position );
 
             animFrame += animSpeedScale;
             if ( animFrame >= animMaxFrame )
             { animFrame = 0; }
-
-            cout << "Accel:" << accelX << ", Velocity:" << velocity.x << endl;
+            cout << camera.offset.x << ", " << camera.offset.y << endl;
         }
 
-        //Note for self: make it so that while not grounded, treat collision on blocks under the current left and right walls as left and right walls
+        //!Note for self: make it so that while not grounded, treat collision on blocks under the current left and right walls as left and right walls
         bool colliding( World world, pair< int, int > tile_pos, pair< int, int > offset = pair( 0, 0 ))
         {
             bool tile_full = world.tile_at( tile_pos ).full;
@@ -391,7 +403,8 @@ class Player
             if (mine)
             { mining = true; }
         }
-
+        
+        //!Currently a bug where you will skip up a block if you fall from above but if you walk up you dont skip; only happens at movespeed 5+
         void move ( World world )
         {
             int grav = 1; // REMOVE DEBUG TOOL
@@ -401,7 +414,7 @@ class Player
             { velocity.x -= 1; }
             else if (accelX == 0 && velocity.x < 0)
             { velocity.x += 1; }
-            if ( abs(velocity.x + accelX) <= 3 )
+            if ( abs(velocity.x + accelX) <= 4 )
             { velocity.x += accelX; }
 
             //grounded = 1;
@@ -463,7 +476,7 @@ class Player
                 velocity.y = 0;
             }
 
-            // the floor_y - 1 checks might be avoidable if theres a better way to manage floor_y ^
+            //! the floor_y - 1 checks might be avoidable if theres a better way to manage floor_y ^
             grounded = 0;
             while ( colliding( world, pair( left_x, floor_y ) ) ||
                     colliding( world, pair( left_x, floor_y - 1 ) ) ||
@@ -480,10 +493,10 @@ class Player
             
         }
 
-        void mine ( World &world, int mouse_x, int mouse_y )
+        void mine ( World &world, int mouse_x, int mouse_y, const Camera camera )
         {
-            int tile_x = ceil( ( double )( mouse_x - world.corner_x ) / ( double )( 12*world.scale ) - 0.5 );
-            int tile_y = ceil( ( double )( mouse_y - world.corner_y) / ( double )( 14*world.scale ) + 0.5 * ( ( tile_x + 1 ) % 2 ) ) - 1;
+            int tile_x = ceil( ( double )( mouse_x - world.corner_x - camera.offset.x ) / ( double )( 12*world.scale ) - 0.5 );
+            int tile_y = ceil( ( double )( mouse_y - world.corner_y - camera.offset.y ) / ( double )( 14*world.scale ) + 0.5 * ( ( tile_x + 1 ) % 2 ) ) - 1;
 
             if ( mining )
             {
@@ -495,16 +508,16 @@ class Player
             }
         }
 
-        //I think i can get rid of sdl_rendederer & renederer here
-        void render_cursor ( SDL_Renderer& renderer, World world, int mouse_x, int mouse_y )
+        //!I think i can get rid of sdl_rendederer & renederer here
+        void render_cursor ( SDL_Renderer& renderer, World world, int mouse_x, int mouse_y, const Camera camera )
         {
-            int tile_x = ceil( ( double )( mouse_x - world.corner_x ) / ( double )( 12*world.scale ) - 0.5 );
-            int tile_y = ceil( ( double )( mouse_y - world.corner_y) / ( double )( 14*world.scale ) + 0.5 * ( ( tile_x + 1 ) % 2 ) ) - 1;
+            int tile_x = ceil( ( double )( mouse_x - world.corner_x - camera.offset.x ) / ( double )( 12*world.scale ) - 0.5 );
+            int tile_y = ceil( ( double )( mouse_y - world.corner_y - camera.offset.y ) / ( double )( 14*world.scale ) + 0.5 * ( ( tile_x + 1 ) % 2 ) ) - 1;
 
             //cout << ". Tile x: " << tile_x << ", Tile y: " << tile_y << endl;
 
-            int render_x = world.corner_x + 12*world.scale*tile_x;
-            int render_y = world.corner_y + 14*world.scale*tile_y + 7*world.scale*( tile_x % 2 );
+            int render_x = world.corner_x + 12*world.scale*tile_x + camera.offset.x;
+            int render_y = world.corner_y + 14*world.scale*tile_y + 7*world.scale*( tile_x % 2 ) + camera.offset.y;
 
             WORLD_RenderCursor( renderer, world.scale, render_x, render_y, SDL_Color{ 0, 200, 0, 63 } );
         }
@@ -529,7 +542,7 @@ int main( int argc, char *argv[] )
     SDL_Event event;
     
     int scale = 4;
-    World world( *renderer, scale, 15, 10 );
+    World world( *renderer, scale, 30, 10 );
     Player player( *renderer, &images, scale, 150, 00 );
 
     bool running = true;
@@ -558,8 +571,14 @@ int main( int argc, char *argv[] )
                     { player.jump( keydown ); }
                     
                     if ( SDLK_s == event.key.keysym.sym )
-                    { player.position.y += 1; }
+                    {  }
                     
+                    if ( SDLK_RIGHT == event.key.keysym.sym && keydown )
+                    { camera.offset.x += 5; }
+
+                    if ( SDLK_LEFT == event.key.keysym.sym && keydown )
+                    { camera.offset.x -= 5; }
+
                     break;
                 
                 case SDL_MOUSEBUTTONDOWN:
@@ -570,13 +589,13 @@ int main( int argc, char *argv[] )
 
         SDL_GetMouseState( &mouse_x, &mouse_y );
         player.move( world );
-        player.mine( world, mouse_x, mouse_y );
+        player.mine( world, mouse_x, mouse_y, camera );
 
         SDL_SetRenderDrawColor( renderer, 191, 191, 255, 255 );
         SDL_RenderClear( renderer );
-        world.render( );
-        player.render( );
-        player.render_cursor( *renderer, world, mouse_x, mouse_y );
+        world.render( camera );
+        player.render( camera );
+        player.render_cursor( *renderer, world, mouse_x, mouse_y, camera );
         SDL_RenderPresent( renderer );
 
         //Framerate and deltaTime
